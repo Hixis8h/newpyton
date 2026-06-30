@@ -9,7 +9,9 @@ print("I'm Chayawat", "I'll keep practicing!")
 print("I'm Chayawat" + "I'll keep practicing!")
 
 
-print(1, 2, 3, 4, 5, 8, 13, 21, 34, 55)
+print(1, 1, 2, 3, 5, 8, 13, 21, 34, 55)
 
-print('%d %d %d %d %d %d %d %d %d' % (1, 2, 3, 4, 5, 8, 13, 21, 34, 55))
+print('%d %d %d %d %d %d %d %d %d %d' % (1, 1, 2, 3, 5, 8, 13, 21, 34, 55))
+
+
 
