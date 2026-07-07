@@ -1,0 +1,9 @@
+input : widrh and height of the recatangle
+Output : The area of the recatangle
+begin
+Print "Enter the width of the recatangle"
+Read width;
+Print "Enter the height of recatangle"
+Read height ;
+area = widrh*height;
+Print "The area of the recatangle is ", area; 
