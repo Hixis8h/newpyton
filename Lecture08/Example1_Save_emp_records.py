@@ -1,15 +1,8 @@
-num_emps = int(input("How many employee records do you want to create? "))
+with open("employee.txt", "r") as emp_file:
+    lines = emp_file.read().splitlines()
 
-with open("employees.txt", "w") as emp_file:
-    for count in range(1, num_emps + 1):
-        print("Enter the data for employee #", count, sep="")
-        name = input("Name: ")
-        id_num = input("ID number: ")
-        dept = input("Department: ")
-
-        emp_file.write(name + "\n")
-        emp_file.write(id_num + "\n")
-        emp_file.write(dept + "\n")
-        print()
-
-print("Employee records written to employees.txt")
+for i in range(0, len(lines), 3):
+    print(f"Name: {lines[i]}")
+    print(f"ID: {lines[i + 1]}")
+    print(f"Dept: {lines[i + 2]}")
+    print()
