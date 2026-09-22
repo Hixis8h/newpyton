@@ -36,7 +36,7 @@ POINTS = [
 ]
 
 INPUT_MODE = "adb"
-BOT_VERSION = "v4-flexible-cards"
+BOT_VERSION = "v4-safe-filter-full"
 
 CONFIRM_TIMES = 5
 CONFIRM_REQUIRED = 4
@@ -71,7 +71,7 @@ def screenshot():
 
 
 # ==================================================
-# ตรวจสอบการ์ดบนหน้าจอแบบ Dynamic Scale
+# ตรวจสอบกรอบการ์ดแบบเข้มงวด (ป้องกันการจับตัวละคร/ฉากหลัง)
 # ==================================================
 
 def is_fixed_card_present(img, rect):
@@ -87,16 +87,22 @@ def is_fixed_card_present(img, rect):
         return False
 
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    px = max(2, int(crop.shape[1] * 0.07))
-    py = max(2, int(crop.shape[0] * 0.07))
+    
+    # เช็คขอบการ์ดต้องมีความเข้มชัดเจน
+    edges = cv2.Canny(gray, 50, 150)
+    edge_ratio = float(np.mean(edges > 0))
+
+    px = max(2, int(crop.shape[1] * 0.08))
+    py = max(2, int(crop.shape[0] * 0.08))
     border = np.concatenate([
         gray[:py, :].ravel(),
         gray[-py:, :].ravel(),
         gray[:, :px].ravel(),
         gray[:, -px:].ravel(),
     ])
-    dark_ratio = float(np.mean(border < 155))
-    return dark_ratio >= 0.012
+    dark_ratio = float(np.mean(border < 150))
+
+    return edge_ratio >= 0.02 and dark_ratio >= 0.015
 
 
 def get_card_state(img):
@@ -122,7 +128,7 @@ def get_card_state(img):
 
 
 # ==================================================
-# หา Header และตัวเลข
+# หา Header "Tries left" เฉพาะจุดตรงกลางด้านบน
 # ==================================================
 
 def find_header(img):
@@ -130,7 +136,12 @@ def find_header(img):
         return None
 
     h, w = img.shape[:2]
-    upper = img[:int(h * HEADER_Y_RATIO), :]
+    # ค้นหาเฉพาะโซนด้านบนตรงกลาง (ตัดขอบซ้าย/ขวาและล่างออก เพื่อไม่ให้โดนตัวละครหรือฉากหลัง)
+    upper = img[int(h * 0.05):int(h * HEADER_Y_RATIO), int(w * 0.25):int(w * 0.75)]
+    
+    if upper.size == 0:
+        return None
+
     b, g, r = cv2.split(upper)
 
     mask = (
@@ -147,9 +158,9 @@ def find_header(img):
 
     for c in contours:
         x, y, cw, ch = cv2.boundingRect(c)
-        if cw < w * 0.15 or ch < h * 0.035 or ch > h * 0.15:
+        if cw < w * 0.10 or ch < h * 0.02 or ch > h * 0.10:
             continue
-        if cw / max(ch, 1) < 3.0:
+        if cw / max(ch, 1) < 2.5:
             continue
         candidates.append((x, y, cw, ch, cw * ch))
 
@@ -157,7 +168,8 @@ def find_header(img):
         return None
 
     candidates.sort(key=lambda x: x[4], reverse=True)
-    return candidates[0][:4]
+    bx, by, bcw, bch, _ = candidates[0]
+    return (bx + int(w * 0.25), by + int(h * 0.05), bcw, bch)
 
 
 def get_first_digit(img):
@@ -363,17 +375,16 @@ def wait_second_card_result(set_number, baseline_digit):
     return "TIMEOUT"
 
 
-def wait_full_card_screen():
-    """รอจนกว่าจะเจอหน้าจอเกม (ไม่จำกัดว่าจะต้อง 5 หรือ 6 ใบ ขอให้เจอการ์ดและ header)"""
+def wait_full_card_screen(required_count=6):
     while True:
         img = screenshot()
         if img is not None and find_header(img) is not None:
             slots = get_card_state(img)
-            if len(slots) in (5, 6):
+            if len(slots) == required_count:
                 h, w = img.shape[:2]
-                print(f"[OK] พบหน้าจอการ์ด {len(slots)} ใบ (Resolution: {w}x{h})")
-                return img, len(slots)
-        print("[WAIT] รอหน้าจอเกม...")
+                print(f"[OK] พบหน้าจอการ์ด {required_count} ใบ (Resolution: {w}x{h})")
+                return img
+        print(f"[WAIT] รอหน้าจอการ์ด {required_count} ใบ...")
         time.sleep(0.3)
 
 
@@ -384,44 +395,38 @@ def wait_full_card_screen():
 def play_one_set(set_number, baseline_digit):
     print(f'\n{"="*55}\nเริ่มชุดที่ {set_number}\n{"="*55}')
     
-    img, count = wait_full_card_screen()
+    wait_full_card_screen(required_count=6)
 
-    # ถ้าเปิดมาเจอ 6 ใบ (เริ่มรอบใหม่ของชุด)
-    if count == 6:
-        pair = confirm_pair(6)
-        if pair is None:
-            return 'RETRY'
+    pair = confirm_pair(6)
+    if pair is None:
+        return 'RETRY'
 
-        a, b = pair
-        slots = get_card_state(screenshot())
-        if not tap_card(a, slots):
-            return 'RETRY'
+    a, b = pair
+    slots = get_card_state(screenshot())
+    if not tap_card(a, slots):
+        return 'RETRY'
 
-        if wait_first_card_result(a) != 'CORRECT':
-            return 'WRONG'
+    if wait_first_card_result(a) != 'CORRECT':
+        return 'WRONG'
 
-        time.sleep(PRESS_DELAY)
-        count = 5  # ปรับเป็น 5 เพื่อให้ทำงานต่อในสเต็ปถัดไปทันที
+    time.sleep(PRESS_DELAY)
 
-    # ถ้าเจอ 5 ใบ (กรณีเริ่มกลางทาง หรือหลังจากกดใบแรกถูกแล้ว)
-    if count == 5:
-        second_pair = confirm_pair(5)
-        if second_pair is None:
-            return 'RETRY'
+    second_pair = confirm_pair(5)
+    if second_pair is None:
+        return 'RETRY'
 
-        second = second_pair[0]
-        slots = get_card_state(screenshot())
-        if not tap_card(second, slots):
-            return 'RETRY'
+    second = second_pair[0]
+    slots = get_card_state(screenshot())
+    if not tap_card(second, slots):
+        return 'RETRY'
 
-        result = wait_second_card_result(set_number, baseline_digit)
-        if result == 'CORRECT':
-            print(f'ชุดที่ {set_number} ถูกต้อง ✓')
-            return 'CORRECT'
-        if result == 'WRONG':
-            print(f'ชุดที่ {set_number} ผิด ✗')
-            return 'WRONG'
-
+    result = wait_second_card_result(set_number, baseline_digit)
+    if result == 'CORRECT':
+        print(f'ชุดที่ {set_number} ถูกต้อง ✓')
+        return 'CORRECT'
+    if result == 'WRONG':
+        print(f'ชุดที่ {set_number} ผิด ✗')
+        return 'WRONG'
     return 'RETRY'
 
 
@@ -430,15 +435,15 @@ def play_one_set(set_number, baseline_digit):
 # ==================================================
 
 def main():
-    print(f'{"="*60}\nCOOKIE RUN CARD BOT - Flexible Cards\n{"="*60}')
+    print(f'{"="*60}\nCOOKIE RUN CARD BOT - Safe Filter Full\n{"="*60}')
     
     if adb_run(["shell", "echo", "READY"]) is None:
         print("ไม่สามารถเชื่อมต่อ ADB ได้")
         return
 
-    print("รอหน้าจอเกม...")
+    print("รอหน้าจอเกม (6 ใบ)...")
     while True:
-        img, _ = wait_full_card_screen()
+        img = wait_full_card_screen(required_count=6)
         baseline_digit = get_first_digit(img)
         if baseline_digit is not None:
             print("เก็บ reference ของ 3/3 แล้ว")
@@ -454,7 +459,7 @@ def main():
             elif result == "WRONG":
                 print(f'\n{"="*55}\nผิด → RESET เป็นชุด 1\n{"="*55}')
                 set_number = 1
-                wait_full_card_screen()
+                wait_full_card_screen(required_count=6)
             else:
                 time.sleep(0.3)
 
@@ -465,7 +470,7 @@ def main():
             print(f'กำลังพักเครื่อง... เหลือเวลาอีก {mins:02d}:{secs:02d}', end='\r')
             time.sleep(1)
         print('\nหมดเวลาพัก! เริ่มรอบใหม่...')
-        wait_full_card_screen()
+        wait_full_card_screen(required_count=6)
 
 
 if __name__ == "__main__":
